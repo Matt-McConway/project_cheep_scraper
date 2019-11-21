@@ -50,8 +50,8 @@ def get_coupon_code(request):
         
         # Parse page content into a tree for scraping
         tree = html.fromstring(page.content)
-        coupon = tree.xpath('//div[@title="Coupon code"]/strong/text()') # Xpath search for single coupon 
-        coupons = tree.xpath('//div[@title="Coupon codes"]/strong/text()') # Multiple coupons have a slightly different title property
+        coupon = tree.xpath('//div[contains(@title,"Coupon code")]/strong/text()') # Xpath search for single coupon 
+        coupons = tree.xpath('//div[contains(@title,"Coupon codes")]/strong/text()') # Nodes with multiple coupons have a slightly different title
         
         # CORS header - again, not sure if I have this right
         headers = {
