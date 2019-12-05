@@ -16,6 +16,7 @@ google-auth==1.6.3
 google-cloud==0.34.0
 google-cloud-core==1.0.3
 google-cloud-error-reporting==0.32.0
+google-cloud-firestore==1.6.0
 google-cloud-logging==1.12.1
 google-cloud-storage==1.18.0
 google-resumable-media==0.3.2

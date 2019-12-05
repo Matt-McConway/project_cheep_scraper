@@ -5,6 +5,7 @@ from flask import escape
 from flask import abort
 import requests
 from lxml import html
+from google.cloud import firestore
 
 def get_coupon_code(request):
     """HTTP Cloud Function.
@@ -80,5 +81,91 @@ def get_coupon_code(request):
         print('get_coupon_code - return 500 - General Error - :(')
         return abort(500)
 
+def batch_write_deals_to_firestore(event, context):
+    """Background Cloud Function, triggered by Pub/Sub.
+    Args:
+         event (dict):  The dictionary with data specific to this type of
+         event. The `data` field contains the PubsubMessage message. The
+         `attributes` field will contain custom attributes if there are any.
+         context (google.cloud.functions.Context): The Cloud Functions event
+         metadata. The `event_id` field contains the Pub/Sub message ID. The
+         `timestamp` field contains the publish time.
+    Incoming Payload:
+        {
+            "Websites": [
+                {
+                "Name": "cheapies",
+                "URL": "https://www.cheapies.nz/deals/feed"
+                }
+            ]
+        }
+    
+    TODO: Few more tweaks to make it easier to maintain when adding new websites to scrape
+    """
+    import base64
+    import json
 
-   
+    # Helper functions start
+    def get_cheapies_nodes_from_xml(xml):
+        tree = html.fromstring(xml)
+        nodeLinks = tree.xpath('//link[not(contains(text(),"deal"))]')
+        nodeLinks = nodeLinks[2:]
+        nodes = []
+        for link in nodeLinks:
+            nodes.append(str(html.tostring(link))[37:][:-4])
+        # Helper function that scrapes gets nodes from cheapies xml
+        return nodes
+    
+    def get_cheapies_codes_from_node(nodeID, BASE_URL):
+        if BASE_URL.__contains__('cheapies'):
+            page = requests.get('https://www.cheapies.nz/node/%s' % nodeID)
+            try:
+                page.raise_for_status()
+            except Exception as exc:
+                print('get_cheapies_rss - Issue when querying node %s. There was a problem: %s' % (nodeID, exc))
+            tree = html.fromstring(page.content)
+            coupons = tree.xpath('//div[contains(@title,"Coupon code")]/strong/text()')  
+
+            return coupons
+        else:
+            return []
+
+    # Helper functions end
+    print("""This Function was triggered by messageId {} published at {}
+    """.format(context.event_id, context.timestamp))
+
+    DATA_TO_WRITE = []
+
+    if 'data' in event:
+        payload = json.loads(base64.b64decode(event['data']).decode('utf-8'))
+    
+        for site in payload['Websites']:
+            SITE_NAME = site['Name']
+            BASE_URL = site['URL']
+
+            page = requests.get(BASE_URL)
+            try:
+                page.raise_for_status()
+            except Exception as exc:
+                print('get_cheapies_rss - Issue when querying RSS Feed. There was a problem: %s' % (exc))
+            
+            nodes = get_cheapies_nodes_from_xml(page.content)
+
+            codes = [{"Node": i, "Codes": get_cheapies_codes_from_node(i, BASE_URL)} for i in nodes]
+            DATA_TO_WRITE.append({
+                "Name": SITE_NAME,
+                "RSS": page.text,
+                "Codes": codes
+            })
+    db = firestore.Client()
+    batch = db.batch()
+    print('Batch starting')
+    for payload in DATA_TO_WRITE:
+        rss_ref = db.collection(payload["Name"]).document('RSS')
+        batch.set(rss_ref, {'Content': payload["RSS"]})
+
+        codes_ref = db.collection(payload["Name"]).document('Codes')
+        batch.set(codes_ref, {'Content': payload["Codes"]})
+
+    batch.commit()
+    print('Batch committed')
